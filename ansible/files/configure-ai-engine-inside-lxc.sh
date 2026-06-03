@@ -1,6 +1,3 @@
-echo "  Native llama.cpp web UI : http://<container-ip>:80"
-  print "  --host 0.0.0.0 --port 80 \\"
-
 #!/usr/bin/env bash
 # configure-ai-engine-inside-lxc.sh
 # Version: 0.8.1
@@ -177,9 +174,12 @@ Environment=HIP_PATH=${ROCM_PATH}
 ExecStart=${LLAMA_CPP_DIR}/build/bin/llama-server \
   --model ${MODEL_DIR}/${ACTIVE_MODEL_FILE} \
   --host 0.0.0.0 --port 80 \
-  --ctx-size 8192 \
-  -ngl 99 \
-  --batch-size 512
+  --ctx-size 4096 \
+  -ngl 48 \
+  --batch-size 128 \
+  --parallel 1 \
+  --cache-type-k q4_0 \
+  --cache-type-v q4_0
 Restart=on-failure
 RestartSec=10
 User=root
@@ -237,8 +237,9 @@ rewrite_execstart() {
       print "  --model " model " \\"
       print "  --host 0.0.0.0 --port 80 \\"
       print "  --ctx-size " ctx " \\"
-      print "  -ngl 99 \\"
-      print "  --batch-size 512 \\"
+      print "  -ngl 48 \\"
+      print "  --batch-size 128 \\"
+      print "  --parallel 1 \\"
       print "  --cache-type-k " kv " \\"
       if (mtp == "1") {
         print "  --cache-type-v " kv " \\"
