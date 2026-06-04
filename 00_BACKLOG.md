@@ -1,23 +1,60 @@
 # BACKLOG
 
-## Platform
+Items for future implementation. These are human-entered ideas not yet reflected
+in the codebase.
 
-- Add environment overlay model (`config/environments/*.yaml`) for host-specific values.
-- Add CI checks for shell lint and YAML lint.
-- Add policy checks for required modular variables and provider switches.
+## GPU / ROCm
+
+- Add ROCm version pinning to opentofu variables (currently hardcoded as 7.2.3).
+- Add GPU memory utilization monitoring script.
+- Add automatic model eviction when GPU memory is low.
+- Support multi-GPU workloads (future hardware upgrade).
+
+## Model Management
+
+- Add model versioning system (pin specific GGUF files per deployment).
+- Add model download progress tracking and resume support.
+- Add model quality scoring after inference testing.
+- Support speculative decoding for faster inference (requires llama.cpp config changes).
+
+## LXC Lifecycle
+
+- Add LXC snapshot before major model updates.
+- Add LXC health check endpoint in configure script.
+- Add automatic LXC restart on crash (systemd watchdog).
+- Add LXC resource quota enforcement (CPU, memory, I/O).
+
+## Ansible Improvements
+
+- Add ansible-lint to CI workflow.
+- Split configure-ai-engine-inside-lxc.sh into multiple Ansible roles.
+- Add idempotency tests for ansible playbook.
+- Add ansible-galaxy role packaging for reuse.
+
+## OpenTofu
+
+- Add tofu variables for GPU PCI IDs (currently hardcoded).
+- Add tofu output for container IP and API endpoint.
+- Add tofu state locking for multi-operator safety.
+- Migrate from telmate/proxmox to bpg/proxmox provider (align with hlh-docker).
 
 ## Networking
 
-- After UDR7 cutover, set AI VM to static mode and lock DHCP reservation policy.
-- Add DHCP lease discovery helper for dynamic inventory updates.
-- Add optional UDR7 API integration for DHCP reservation automation.
+- Add DNS entry for engine API endpoint.
+- Add HTTPS/TLS termination on nginx reverse proxy.
+- Add rate limiting configuration for API endpoints.
+- Add API key authentication for external consumers.
 
-## Runtime Providers
+## Observability
 
-- Expand dockhand provider role to full parity with docker provider role.
-- Add k8s orchestration adapter role behind the same provider contract.
+- Add Prometheus metrics endpoint for inference latency.
+- Add structured logging for llama-server.
+- Add health check endpoint for orchestration.
+- Add request logging with model name and token count.
 
-## AI Engine
+## Deployment
 
-- Get Working with Tofo.
-- Get Turbo Qaunt working once its in main.
+- Add pre-flight checks for GPU availability before deployment.
+- Add dry-run / plan mode for deploy script.
+- Add rollback procedure for failed deployments.
+- Add CI checks for shell scripts (shellcheck).
