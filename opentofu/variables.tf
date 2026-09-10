@@ -29,7 +29,7 @@ variable "hostname" {
 variable "vmid" {
   description = "LXC VMID"
   type        = number
-  default     = 12
+  default     = 112
 }
 
 variable "ostemplate" {
