@@ -84,22 +84,31 @@ get_host_rocm_version() {
 HOST_ROCM_VERSION="$(get_host_rocm_version)"
 HOST_ROCM_MAJOR="$(echo "${HOST_ROCM_VERSION}" | cut -d. -f1)"
 REQ_MAJOR="$(echo "${ROCM_VERSION}" | cut -d. -f1)"
+# Map host OS to stable repo dist name: stable uses debian13/ubuntu2404 etc, not codename trixie.
+# /etc/os-release on PVE trixie is ID=debian VERSION_ID=13 CODENAME=trixie, but stable wants debian13.
+HOST_ID="$(. /etc/os-release 2>/dev/null; echo "${ID:-}")"
+HOST_VER="$(. /etc/os-release 2>/dev/null; echo "${VERSION_ID:-}")"
 HOST_CODENAME="$(. /etc/os-release 2>/dev/null; echo "${VERSION_CODENAME:-}")"
-if [[ -z "${HOST_CODENAME}" ]]; then
-  HOST_CODENAME="debian13"
-  if grep -qi "trixie" /etc/os-release 2>/dev/null; then HOST_CODENAME="debian13"; fi
-  if grep -qi "bookworm" /etc/os-release 2>/dev/null; then HOST_CODENAME="debian12"; fi
+HOST_REPO_DIST=""
+if [[ "${HOST_ID}" == "debian" && -n "${HOST_VER}" ]]; then
+  # 13 -> debian13, 12 -> debian12 (matches https://stable.repo.amd.com/rocm/core/packages/debian13/ and legacy packages-multi-arch/debian13)
+  HOST_REPO_DIST="debian${HOST_VER%%.*}"
+elif [[ "${HOST_ID}" == "ubuntu" && -n "${HOST_VER}" ]]; then
+  # 24.04 -> ubuntu2404 (matches stable .../ubuntu2404)
+  HOST_REPO_DIST="ubuntu${HOST_VER//./}"
+else
+  # Fallback to codename mapping
+  HOST_REPO_DIST="${HOST_CODENAME}"
+  if grep -qi "trixie" /etc/os-release 2>/dev/null; then HOST_REPO_DIST="debian13"; fi
+  if grep -qi "bookworm" /etc/os-release 2>/dev/null; then HOST_REPO_DIST="debian12"; fi
+  if grep -qi "bullseye" /etc/os-release 2>/dev/null; then HOST_REPO_DIST="debian11"; fi
 fi
-# Detect codename from existing rocm.list if present (more reliable than os-release on PVE)
-if [[ -f /etc/apt/sources.list.d/rocm.list ]]; then
-  if grep -q "stable.repo.amd.com" /etc/apt/sources.list.d/rocm.list 2>/dev/null; then
-    : # already on stable
-    :
-  fi
-fi
+[[ -z "${HOST_REPO_DIST}" ]] && HOST_REPO_DIST="debian13"
+# Keep HOST_CODENAME for display, but use HOST_REPO_DIST for repo URL
+if [[ -z "${HOST_CODENAME}" ]]; then HOST_CODENAME="${HOST_REPO_DIST}"; fi
 
 echo "  Host ROCm    : ${HOST_ROCM_VERSION} (host driver)"
-echo "  Host OS      : ${HOST_CODENAME} ($(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"'))"
+echo "  Host OS      : ${HOST_CODENAME} / ${HOST_REPO_DIST} ($(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"'))"
 echo ""
 
 should_upgrade_host=false
@@ -119,8 +128,8 @@ if [[ "${should_upgrade_host}" == "true" ]]; then
   echo "Host ROCm upgrade required to ${ROCM_VERSION} before LXC will see the GPU."
   echo "  Current host: ${HOST_ROCM_VERSION} -> target: ${ROCM_VERSION}"
   echo "  This will:"
-  echo "    - Switch host repo to https://stable.repo.amd.com/rocm/core/packages/${HOST_CODENAME} for 10.x"
-  echo "      (or https://repo.amd.com/rocm/packages-multi-arch/${HOST_CODENAME} for 7.x)"
+  echo "    - Switch host repo to https://stable.repo.amd.com/rocm/core/packages/${HOST_REPO_DIST} for 10.x"
+  echo "      (or https://repo.amd.com/rocm/packages-multi-arch/${HOST_REPO_DIST} for 7.x)"
   echo "    - apt update && apt install amdrocm${REQ_MAJOR:+${ROCM_VERSION%.*}} host packages"
   echo "    - May require reboot if amdgpu DKMS/firmware changes"
   echo ""
@@ -131,10 +140,10 @@ if [[ "${should_upgrade_host}" == "true" ]]; then
       echo "[0/6] Upgrading host ROCm ${HOST_ROCM_VERSION} -> ${ROCM_VERSION} ..."
       mkdir -p /etc/apt/keyrings
       if [[ "${REQ_MAJOR}" -ge 10 ]] 2>/dev/null; then
-        echo "  Using stable.repo.amd.com for ROCm 10.x (host ${HOST_CODENAME})"
+        echo "  Using stable.repo.amd.com for ROCm 10.x (host ${HOST_REPO_DIST} <- ${HOST_CODENAME})"
         wget -qO - https://stable.repo.amd.com/rocm/gpg/packages.gpg | gpg --dearmor | tee /etc/apt/keyrings/amdrocm.gpg > /dev/null
         tee /etc/apt/sources.list.d/rocm.list << EOF
-deb [arch=amd64 signed-by=/etc/apt/keyrings/amdrocm.gpg] https://stable.repo.amd.com/rocm/core/packages/${HOST_CODENAME} stable main
+deb [arch=amd64 signed-by=/etc/apt/keyrings/amdrocm.gpg] https://stable.repo.amd.com/rocm/core/packages/${HOST_REPO_DIST} stable main
 EOF
         tee /etc/apt/preferences.d/rocm-pin << 'PIN'
 Package: *
@@ -142,10 +151,10 @@ Pin: origin stable.repo.amd.com
 Pin-Priority: 1001
 PIN
       else
-        echo "  Using repo.amd.com/packages-multi-arch for ROCm 7.x (host ${HOST_CODENAME})"
+        echo "  Using repo.amd.com/packages-multi-arch for ROCm 7.x (host ${HOST_REPO_DIST} <- ${HOST_CODENAME})"
         wget -qO - https://repo.amd.com/rocm/packages-multi-arch/gpg/rocm.gpg | gpg --dearmor | tee /etc/apt/keyrings/amdrocm.gpg > /dev/null
         tee /etc/apt/sources.list.d/rocm.list << EOF
-deb [arch=amd64 signed-by=/etc/apt/keyrings/amdrocm.gpg] https://repo.amd.com/rocm/packages-multi-arch/${HOST_CODENAME} stable main
+deb [arch=amd64 signed-by=/etc/apt/keyrings/amdrocm.gpg] https://repo.amd.com/rocm/packages-multi-arch/${HOST_REPO_DIST} stable main
 EOF
         tee /etc/apt/preferences.d/rocm-pin << 'PIN'
 Package: *
@@ -154,7 +163,16 @@ Pin-Priority: 1001
 PIN
       fi
       echo 'APT::Key::GPGCommand "/usr/bin/gpg";' > /etc/apt/apt.conf.d/99gpg-override || true
-      apt-get update
+      # Bullseye security is expired on this trixie host (old leftover) — ignore Valid-Until to unblock apt
+      if ! apt-get update -o Acquire::Check-Valid-Until=false 2>&1 | tee /tmp/rocm-apt-update.log; then
+        echo "WARNING: apt update had errors (see /tmp/rocm-apt-update.log) — continuing if stable repo was fetched"
+        cat /tmp/rocm-apt-update.log 2>&1 | tail -40 || true
+      fi
+      # If stable repo still 404, diagnostic
+      if grep -q "404  Not Found" /tmp/rocm-apt-update.log 2>&1 || grep -q "does not have a Release file" /tmp/rocm-apt-update.log 2>&1; then
+        echo "ERROR: Host repo https://stable.repo.amd.com/rocm/core/packages/${HOST_REPO_DIST} has no Release file (check https://stable.repo.amd.com/rocm/core/packages/ for valid dists: debian12 debian13 ubuntu2204 ubuntu2404 etc)" >&2
+        echo "Contents of $(cat /etc/apt/sources.list.d/rocm.list 2>&1)" >&2
+      fi
       ROCM_MM_HOST="$(echo "${ROCM_VERSION}" | cut -d. -f1,2)"
       echo "  Installing host packages for ROCm ${ROCM_VERSION} (try amdrocm${ROCM_MM_HOST}-gfx1150, fallback amdrocm${ROCM_MM_HOST}) ..."
       if ! apt-get install -y --no-install-recommends "amdrocm${ROCM_MM_HOST}-gfx1150" "amdrocm-core${ROCM_MM_HOST}-gfx1150" 2>&1; then
