@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 # configure-ai-engine-inside-lxc.sh
-# Version: 0.9.3
+# Version: 0.9.4
 # Description: Bootstrap llama.cpp AI engine on Ubuntu 24.04 LXC with ROCm+Vulkan dual backend
 # Target GPU: AMD Radeon 890M (gfx1150/Strix Halo) on Proxmox 9.x privileged LXC — gfx1150-only chip
 # Requirements: Run as root inside privileged LXC with GPU passthrough (/dev/dri/card1, renderD129, /dev/kfd) and /srv/ai/models bind mount
 # Changelog:
+#   0.9.4 - Bump ROCm default to 10.0.0 (latest 2026-08-26) — deploy never pinned; still override via ROCM_VERSION=7.14.1
 #   0.9.3 - Dual backend: llama.cpp built with GGML_HIP=ON + GGML_VULKAN=ON (gfx1150)
-#           Unpinned ROCm: ROCM_VERSION env override (default 7.14.1, latest 7.14 patch; supports 10.0.0)
+#           Unpinned ROCm: ROCM_VERSION env override (default 7.14.1, latest 7.14 patch; now 10.0.0)
 #           Vulkan deps restored: libvulkan-dev, glslang-tools (glslc), spirv-tools, vulkan-tools
 #           DEFAULT_MODEL_URL fixed: bartowski/Qwen3-Coder-30B-A3B-Instruct-GGUF (was Qwen2.5 path)
 #           Deploy script now prints ROCm version + backend and forwards ROCM_VERSION into LXC
@@ -66,10 +67,10 @@ SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE_NAME}.service"
 SWITCH_SCRIPT="/usr/local/bin/switch-model.sh"
 GFX_VERSION="11.5.0"   # gfx1150 native — rocBLAS 7.14.x / 10.0.x supports it
 ROCM_PATH="/opt/rocm"
-# Unpinned: tracks latest stable 7.14.x by default (7.14.1 2026-09-02). Override via env:
-#   ROCM_VERSION=10.0.0 bash configure-ai-engine-inside-lxc.sh
-#   ROCM_VERSION=7.14.1 ./deploy-hlh-ai-engine.sh  (forwarded via pct exec env)
-ROCM_VERSION="${ROCM_VERSION:-7.14.1}"
+# Unpinned: tracks latest stable (default 10.0.0 2026-08-26). Override via env:
+#   ROCM_VERSION=7.14.1 bash configure-ai-engine-inside-lxc.sh  (pin to older stable)
+#   ROCM_VERSION=10.0.0 ./deploy-hlh-ai-engine.sh  (forwarded via pct exec env) — never pinned; deploy always prints version
+ROCM_VERSION="${ROCM_VERSION:-10.0.0}"
 DFLASH2_DRAFT_FILE="Qwen3.8-27B-DFlash2-Q4_K_M.gguf"
 DFLASH2_DRAFT_URL="https://huggingface.co/z-lab/Qwen3.8-27B-DFlash2-GGUF/resolve/main/Qwen3.8-27B-DFlash2-Q4_K_M.gguf?download=true"
 
@@ -770,7 +771,7 @@ echo ""
 echo "[Service status]"
 systemctl status "$SERVICE_NAME" --no-pager
 echo ""
-echo "[Bootstrap complete - v0.9.3]"
+echo "[Bootstrap complete - v0.9.4]"
 echo "  Native llama.cpp web UI : http://<container-ip>:80 (HIP+Vulkan dual, gfx1150-only chip)"
 echo "  Switch models with      : switch-model.sh (MTP/ngram/none; HIP default, Vulkan via RADV_PERFTEST=nogttspill)"
 echo "  GPU device              : gfx1150 (AMD Radeon 890M) — ROCm HIP + Vulkan RADV"

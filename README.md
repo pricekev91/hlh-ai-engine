@@ -10,7 +10,7 @@ engine is a shared AI inference service consumed by all application repos (Trash
 BrickCipher, VoxChimera).
 
 - LXC 112, hostname `hlh-ai-engine`, IP `192.168.1.12` (gateway `192.168.1.1`)
-- ROCm `7.14.1` default (2026-09-02 latest 7.14 patch; unpinned — override: `ROCM_VERSION=10.0.0 ./deploy-hlh-ai-engine.sh`) with AMD RDNA 3 890M iGPU (gfx1150, Strix Halo)
+- ROCm `10.0.0` default (2026-08-26 latest; unpinned — override: `ROCM_VERSION=7.14.1 ./deploy-hlh-ai-engine.sh`) with AMD RDNA 3 890M iGPU (gfx1150, Strix Halo) — deploy always prints version, never pinned
 - llama.cpp **dual backend** `HIP+Vulkan` (`GGML_HIP=ON + GGML_VULKAN=ON`, `AMDGPU_TARGETS=gfx1150`, `HSA_OVERRIDE_GFX_VERSION=11.5.0`) — HIP is ROCm; Vulkan is RADV; no inference perf hit vs pure HIP
 - llama.cpp backend serving native web UI on port `80` (`/health` + `/v1` OpenAI API)
 - Model storage on `RaidZ1-6TB` ZFS pool (`/srv/ai/models` host → `/srv/ai/models` LXC bind mount, same path)
@@ -33,10 +33,10 @@ BrickCipher, VoxChimera).
 Deploy the AI engine LXC on the Proxmox host (prints ROCm version + backend):
 
 ```bash
-./deploy-hlh-ai-engine.sh
-# Override ROCm version (unpinned — 7.14.1 is default; 10.0.0 is latest major):
-ROCM_VERSION=10.0.0 ./deploy-hlh-ai-engine.sh
-# Bootstrap also respects: ROCM_VERSION=7.14.1 bash ansible/files/configure-ai-engine-inside-lxc.sh
+./deploy-hlh-ai-engine.sh              # default 10.0.0 (latest 2026-08-26) — header shows ROCm version
+# Override ROCm version (never pinned):
+ROCM_VERSION=7.14.1 ./deploy-hlh-ai-engine.sh   # pin to older stable if needed
+# Bootstrap also respects: ROCM_VERSION=10.0.0 bash ansible/files/configure-ai-engine-inside-lxc.sh
 ```
 
 Reconfigure an existing LXC via Ansible:
@@ -116,7 +116,7 @@ hlh-ai-engine/
 
 **Dual HIP+Vulkan — single chip `gfx1150` (890M Strix Halo), no perf hit.** HIP *is* ROCm (`GGML_HIP` = ROCm path); Vulkan is Mesa RADV. Earlier single-ROCm builds disabled Vulkan for missing `SPIRV-Headers` — now resolved (`libvulkan-dev`, `glslang-tools` `glslc`, `spirv-tools`).
 
-- ROCm `7.14.1` default (unpinned; `ROCM_VERSION=10.0.0` for next major). `7.14.x` + `10.0.x` both support `gfx1150` natively via `rocBLAS`. Package names track `major.minor`: `amdrocm7.14-gfx1150` for `7.14.1`, `amdrocm10.0-gfx1150` for `10.0.0` (`ROCM_MM=$(cut -d. -f1,2)` in bootstrap).
+- ROCm `10.0.0` default (unpinned, latest 2026-08-26; never pinned). `7.14.x` + `10.0.x` both support `gfx1150` natively via `rocBLAS`; deploy always prints version. Package names track `major.minor`: `amdrocm10.0-gfx1150` for `10.0.0`, `amdrocm7.14-gfx1150` for `7.14.1` (`ROCM_MM=$(cut -d. -f1,2)` in bootstrap).
 - `HSA_OVERRIDE_GFX_VERSION=11.5.0` set in `ai-engine.service` `ansible/files/configure-ai-engine-inside-lxc.sh:62` — rocBLAS native `gfx1150`.
 - `AMDGPU_TARGETS=gfx1150` at build time (chip-locked repo; not multi-target).
 - `GGML_HIP=ON + GGML_VULKAN=ON` — same binaries, runtime pick `-dev ROCm0|Vulkan0`. Pure HIP vs dual has **no inference perf delta** (HIP uses `rocBLAS`, Vulkan uses `RADV ACO`; disjoint codegen, idle backend not dispatched). Binary `+~12-18M`, build `+4-6m` only.

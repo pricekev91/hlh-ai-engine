@@ -23,7 +23,7 @@ This is what is already implemented and verified in this repository.
 
 ## ROCm / Runtime
 
-- ROCm **unpinned**: `ROCM_VERSION` env default `7.14.1` (2026-09-02 latest 7.14 patch; `10.0.0` major also supported), override `ROCM_VERSION=x.y.z ./deploy-hlh-ai-engine.sh` — forwarded into LXC
+- ROCm **unpinned, never pinned**: `ROCM_VERSION` env default `10.0.0` (2026-08-26 latest), `7.14.1` still supported via `ROCM_VERSION=7.14.1 ./deploy-hlh-ai-engine.sh` — deploy always prints version, forwarded into LXC
 - ROCm package names track `major.minor`: `amdrocm${ROCM_MM}-gfx1150` + `amdrocm-core-dev${ROCM_MM}-gfx1150` (`ROCM_MM=$(cut -d. -f1,2)`)
 - ROCm repo keyrings and APT pinning configured (`repo.radeon.com` Pin-Priority `1001`, `rocminfo` removed)
 - Vulkan deps restored: `libvulkan-dev`, `glslang-tools` (`glslc`), `spirv-tools`, `vulkan-tools` (for `GGML_VULKAN=ON`, RADV `GFX1150`)
@@ -53,7 +53,7 @@ This is what is already implemented and verified in this repository.
 
 - Ansible inventory: `ansible/inventories/hlh-ai-engine.yml` (`192.168.1.12` `ansible_user: root`)
 - Playbook: `ansible/playbooks/hlh-ai-engine.yml` (`ansible.builtin.script` → `configure-ai-engine-inside-lxc.sh`)
-- Bootstrap script: `ansible/files/configure-ai-engine-inside-lxc.sh` **(v0.9.3)** dual `HIP+Vulkan`, unpinned `ROCM_VERSION`
+- Bootstrap script: `ansible/files/configure-ai-engine-inside-lxc.sh` **(v0.9.4)** dual `HIP+Vulkan`, unpinned `ROCM_VERSION` `10.0.0` default, never pinned
 - SSH key-based auth: `~/.ssh/id_ed25519`
 - Reconfiguration via `configure-hlh-ai-engine.sh` with `--host` and `--offline` flags
 
@@ -86,4 +86,4 @@ This is what is already implemented and verified in this repository.
 
 - Systemd auto-restart on failure (`Restart=on-failure`, `RestartSec=10`) `ai-engine.service` `WorkingDirectory=/opt/llama.cpp/build/bin` `Environment=HSA_OVERRIDE_GFX_VERSION=11.5.0`
 - `switch-model.sh` probes `/health` up to `90s` (`NRestarts` + `ActiveState` crash-loop detect)
-- Bootstrap verification: `rocm-smi`, `hipconfig`, `vulkaninfo --summary`, `nm ... | grep -i hip|vulkan`, `llama-server --version`, `systemctl status ai-engine` — prints `[Bootstrap complete - v0.9.3]` `ROCm ${ROCM_VERSION}` `HIP+Vulkan`
+- Bootstrap verification: `rocm-smi`, `hipconfig`, `vulkaninfo --summary`, `nm ... | grep -i hip|vulkan`, `llama-server --version`, `systemctl status ai-engine` — prints `[Bootstrap complete - v0.9.4]` `ROCm ${ROCM_VERSION}` `HIP+Vulkan` (never pinned)

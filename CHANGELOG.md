@@ -48,6 +48,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is unmerged upstream and the llama.cpp build is unpinned. The file is kept on
   storage for future use (e.g. MI50/60 with a pinned fork)
 
+## [0.9.4] - 2026-09-11
+
+### Changed
+
+- Bump ROCm default **never pinned** to `10.0.0` (2026-08-26 latest; was `7.14.1` `2026-09-02` patch) — deploy always prints version, `ROCM_VERSION=7.14.1` still supported via env override
+- Both `deploy-hlh-ai-engine.sh:34` and `ansible/files/configure-ai-engine-inside-lxc.sh:72` now default `ROCM_VERSION=10.0.0`; comments say never pinned
+- `README`/`90_DONE` `7.14.1` → `10.0.0` default, `10_ACTIVE` `7.14.1`→`10.0.0`, `opentofu` description `7.14.1`→`10.0.0`, bootstrap `v0.9.3→v0.9.4`
+
 ## [0.9.3] - 2026-09-11
 
 ### Added

@@ -29,9 +29,9 @@ LXC_MEMORY="49152"
 LXC_CORES="12"
 LXC_IP_CONFIG="192.168.1.12/24"
 LXC_GATEWAY="192.168.1.1"
-# ROCm version tracks latest stable 7.14.x by default; override with env: ROCM_VERSION=10.0.0 ./deploy-hlh-ai-engine.sh
-# 7.14.1 (2026-09-02) is the current latest patch on the 7.14 stable branch; 10.0.0 is the new major.
-ROCM_VERSION="${ROCM_VERSION:-7.14.1}"
+# ROCm version tracks latest stable — default is latest upstream (10.0.0 2026-08-26); override with env: ROCM_VERSION=7.14.1 ./deploy-hlh-ai-engine.sh
+# Never pinned — deploy always prints the version it will build (see header/footer) and forwards ROCM_VERSION into the LXC.
+ROCM_VERSION="${ROCM_VERSION:-10.0.0}"
 LLAMA_BACKEND="HIP+Vulkan (gfx1150, dual)"
 
 while [[ $# -gt 0 ]]; do
