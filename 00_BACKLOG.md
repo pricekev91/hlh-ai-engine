@@ -5,16 +5,16 @@ in the codebase.
 
 ## GPU / ROCm
 
-- Add GPU memory utilization monitoring script (`rocm-smi` parsing + alerting)
-- Add automatic model eviction when GPU memory is low
+- Add GPU memory utilization monitoring script (`rocm-smi` parsing + alerting; `vulkaninfo` + `RADV_PERFTEST=nogttspill` as Vulkan complement)
+- Add automatic model eviction when GPU memory is low (consider Vulkan `88G` UMA vs HIP `48G` split)
 - Support multi-GPU workloads (future hardware upgrade)
-- Track ROCm version compatibility matrix across Proxmox kernel updates
+- Track ROCm version compatibility matrix across Proxmox kernel updates (now unpinned `ROCM_VERSION` `7.14.1`→`10.0.0`; matrix still needed)
 
 ## Model Management
 
 - Add model versioning system (pin specific GGUF files per deployment)
-- Add model download progress tracking and resume support
-- Add model quality scoring after inference testing
+- ~~Add model download progress tracking and resume support~~ — `dl.sh` resumable `curl -C -` now in bootstrap `v0.9.3` (`90_DONE`); still needs progress UI
+- Add model quality scoring after inference testing (consider per-backend `HIP` vs `Vulkan` scores)
 
 ## LXC Lifecycle
 
@@ -45,9 +45,9 @@ in the codebase.
 
 ## Observability
 
-- Add Prometheus metrics endpoint for inference latency
+- Add Prometheus metrics endpoint for inference latency (also consider `rocm-cli` `rocmd` `Observe` TUI + `rocm examine --json` as sidecar; evaluate `rocm dash` vs Prometheus exporter)
 - Add structured logging for llama-server
-- Add request logging with model name and token count
+- Add request logging with model name, token count, and backend (`HIP`/`Vulkan`) for per-backend accounting
 
 ## Deployment
 

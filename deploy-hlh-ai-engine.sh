@@ -29,7 +29,10 @@ LXC_MEMORY="49152"
 LXC_CORES="12"
 LXC_IP_CONFIG="192.168.1.12/24"
 LXC_GATEWAY="192.168.1.1"
-ROCM_VERSION="7.14.0"
+# ROCm version tracks latest stable 7.14.x by default; override with env: ROCM_VERSION=10.0.0 ./deploy-hlh-ai-engine.sh
+# 7.14.1 (2026-09-02) is the current latest patch on the 7.14 stable branch; 10.0.0 is the new major.
+ROCM_VERSION="${ROCM_VERSION:-7.14.1}"
+LLAMA_BACKEND="HIP+Vulkan (gfx1150, dual)"
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -48,6 +51,13 @@ done
 
 command -v pct >/dev/null 2>&1 || { echo "ERROR: pct command not found. Run on Proxmox host." >&2; exit 1; }
 [[ -f "$BOOTSTRAP_SCRIPT" ]] || { echo "ERROR: Bootstrap script not found: $BOOTSTRAP_SCRIPT" >&2; exit 1; }
+
+echo "=== hlh-ai-engine deploy ==="
+echo "  LXC          : ${LXC_ID} (${LXC_NAME}) ${LXC_IP_CONFIG} on ${POOL}"
+echo "  ROCm version : ${ROCM_VERSION} (override: ROCM_VERSION=x.y.z ./deploy-hlh-ai-engine.sh)"
+echo "  Backend      : ${LLAMA_BACKEND} — llama.cpp built with GGML_HIP=ON + GGML_VULKAN=ON"
+echo "  Model dir    : ${MODEL_HOST_DIR} -> ${MODEL_LXC_DIR}"
+echo ""
 
 confirm_existing_lxc_delete() {
 	local answer
@@ -80,7 +90,7 @@ if pct status "${LXC_ID}" >/dev/null 2>&1; then
 	pct destroy "${LXC_ID}" >/dev/null 2>&1 || pct delete "${LXC_ID}"
 fi
 
-echo "[2/6] Creating privileged Ubuntu LXC (${LXC_ID}, ${LXC_NAME}) on ${POOL}..."
+echo "[2/6] Creating privileged Ubuntu LXC (${LXC_ID}, ${LXC_NAME}) on ${POOL} — ROCm ${ROCM_VERSION}, ${LLAMA_BACKEND}..."
 pct create "${LXC_ID}" "${LXC_IMAGE}" \
 	--storage "${POOL}" \
 	--rootfs "${LXC_ROOTFS_SIZE}" \
@@ -92,7 +102,7 @@ pct create "${LXC_ID}" "${LXC_IMAGE}" \
 	--unprivileged 0 \
 	--onboot 1 \
 	--mp0 "${MODEL_HOST_DIR},mp=${MODEL_LXC_DIR}" \
-	--description "llama.cpp AI engine with ROCm ${ROCM_VERSION}, model storage on ${POOL} (Qwen3-Coder-30B)"
+	--description "llama.cpp AI engine ${LLAMA_BACKEND} ROCm ${ROCM_VERSION}, model storage on ${POOL} (Qwen3-Coder-30B)"
 
 echo "[3/6] Adding GPU/ROCm passthrough devices..."
 # Only the 890M iGPU (gfx1150): card1 (226:1) + renderD129 (226:129)
@@ -119,11 +129,13 @@ echo "[4/6] Starting LXC ${LXC_ID}..."
 pct start "${LXC_ID}"
 sleep 5
 
-echo "[5/6] Running in-container bootstrap..."
+echo "[5/6] Running in-container bootstrap (ROCm ${ROCM_VERSION}, ${LLAMA_BACKEND})..."
 pct exec "${LXC_ID}" -- mkdir -p /root/ai-engine-bootstrap
 pct push "${LXC_ID}" "$BOOTSTRAP_SCRIPT" /root/ai-engine-bootstrap/configure-ai-engine-inside-lxc.sh --perms 0755
-pct exec "${LXC_ID}" -- bash /root/ai-engine-bootstrap/configure-ai-engine-inside-lxc.sh
+pct exec "${LXC_ID}" -- env ROCM_VERSION="${ROCM_VERSION}" bash /root/ai-engine-bootstrap/configure-ai-engine-inside-lxc.sh
 
 echo "[6/6] Deployment complete. LXC ${LXC_ID} (${LXC_NAME}) is running."
 echo "Model storage: ${MODEL_HOST_DIR} (host) <-> ${MODEL_LXC_DIR} (container) on ${POOL}"
-echo "Access llama-server at http://<container-ip>:8080"
+echo "ROCm version : ${ROCM_VERSION} | Backend: ${LLAMA_BACKEND} (HIP+Vulkan dual, gfx1150)"
+echo "Access llama-server at http://<container-ip>:80 (native web UI + /v1 API)"
+echo "Health: curl -s http://192.168.1.12:80/health && curl -s http://192.168.1.12:80/v1/models"

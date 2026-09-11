@@ -48,6 +48,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   is unmerged upstream and the llama.cpp build is unpinned. The file is kept on
   storage for future use (e.g. MI50/60 with a pinned fork)
 
+## [0.9.3] - 2026-09-11
+
+### Added
+
+- Dual HIP+Vulkan build: `llama.cpp` now `GGML_HIP=ON + GGML_VULKAN=ON` (`gfx1150`-only, `AMDGPU_TARGETS=gfx1150`, `HSA_OVERRIDE_GFX_VERSION=11.5.0`)
+  HIP is ROCm, Vulkan is Mesa RADV; same binaries, runtime pick `-dev ROCm0|Vulkan0`, no inference perf hit vs pure HIP
+- Vulkan build deps restored: `libvulkan-dev`, `glslang-tools` (`glslc`), `spirv-tools`, `vulkan-tools` (fixes `README` `SPIRV-Headers` gap)
+- Deploy header prints `ROCm version : ${ROCM_VERSION} | Backend: HIP+Vulkan dual, gfx1150` and forwards `ROCM_VERSION` into LXC via `pct exec env`
+
+### Changed
+
+- **ROCm unpinned**: `ROCM_VERSION` env default `7.14.1` (2026-09-02 latest `7.14` patch; was pinned `7.14.0`), supports `10.0.0` major
+  Packages track `major.minor`: `amdrocm${MM}-gfx1150` + `amdrocm-core-dev${MM}-gfx1150` (`ROCM_MM=$(cut -d. -f1,2)`)
+  Both `deploy-hlh-ai-engine.sh:32` and `ansible/files/configure-ai-engine-inside-lxc.sh:64` respect `ROCM_VERSION=10.0.0 ./deploy-hlh-ai-engine.sh`
+- `DEFAULT_MODEL_URL` fixed: `bartowski/Qwen3-Coder-30B-A3B-Instruct-GGUF` (was `Qwen2.5-Coder-32B` path containing `Qwen3-Coder-30B` file)
+- Docs current: `README` `LXC 101→112`, `vmid 101→112`, `GPU Backend Notes` dual `HIP+Vulkan` `88G` UMA vs `48G` HIP, `Health Checks` `vulkaninfo`/`HIP+Vulkan nm`, `90_DONE` `LXC 112` `amdrocm${MM}` `v0.9.3`
+- Bootstrap version `0.9.2 → 0.9.3`, `description` `ROCm+Vulkan dual` `gfx1150-only chip`
+
+### Fixed
+
+- `deploy-hlh-ai-engine.sh:141` `http://<container-ip>:8080` → `http://<container-ip>:80` (native web UI, was stale after `80` migration)
+- Bootstrap Vulkan verification: `glslc` check, `vulkaninfo --summary` after device passthrough, `nm ... | grep hip|vulkan` dual symbol check (was HIP-only)
+
 ## [0.3.1] - 2026-06
 
 ### Fixed

@@ -100,9 +100,9 @@ variable "lxc_root_password" {
 }
 
 variable "description" {
-  description = "LXC description"
+  description = "LXC description (ROCm version is unpinned — set via deploy-hlh-ai-engine.sh ROCM_VERSION env)"
   type        = string
-  default     = "llama.cpp AI engine with ROCm 7.14.0, model storage on RaidZ1-6TB"
+  default     = "llama.cpp AI engine HIP+Vulkan gfx1150 (ROCm 7.14.1 dual) model storage on RaidZ1-6TB"
 }
 
 variable "model_mount_path" {

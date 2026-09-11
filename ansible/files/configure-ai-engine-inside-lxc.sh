@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # configure-ai-engine-inside-lxc.sh
-# Version: 0.9.2
-# Description: Bootstrap llama.cpp AI engine on Ubuntu 24.04 LXC with ROCm passthrough
-# Target GPU: AMD Radeon 890M (gfx1150/Strix Halo) on Proxmox 9.x privileged LXC
-# Requirements: Run as root inside privileged LXC with GPU passthrough and /srv/ai/models bind mount
+# Version: 0.9.3
+# Description: Bootstrap llama.cpp AI engine on Ubuntu 24.04 LXC with ROCm+Vulkan dual backend
+# Target GPU: AMD Radeon 890M (gfx1150/Strix Halo) on Proxmox 9.x privileged LXC — gfx1150-only chip
+# Requirements: Run as root inside privileged LXC with GPU passthrough (/dev/dri/card1, renderD129, /dev/kfd) and /srv/ai/models bind mount
 # Changelog:
+#   0.9.3 - Dual backend: llama.cpp built with GGML_HIP=ON + GGML_VULKAN=ON (gfx1150)
+#           Unpinned ROCm: ROCM_VERSION env override (default 7.14.1, latest 7.14 patch; supports 10.0.0)
+#           Vulkan deps restored: libvulkan-dev, glslang-tools (glslc), spirv-tools, vulkan-tools
+#           DEFAULT_MODEL_URL fixed: bartowski/Qwen3-Coder-30B-A3B-Instruct-GGUF (was Qwen2.5 path)
+#           Deploy script now prints ROCm version + backend and forwards ROCM_VERSION into LXC
 #   0.9.2 - switch-model.sh v1.7.0: DFlash2 option removed (bandwidth-starved
 #           iGPU can't benefit; draft not loadable on unpinned master). Spec
 #           menu is now MTP / ngram / none (standard) only.
@@ -48,7 +53,7 @@ set -euo pipefail
 
 # --- CONFIGURABLE ---
 MODEL_DIR="/srv/ai/models"
-DEFAULT_MODEL_URL="https://huggingface.co/bartowski/Qwen2.5-Coder-32B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
+DEFAULT_MODEL_URL="https://huggingface.co/bartowski/Qwen3-Coder-30B-A3B-Instruct-GGUF/resolve/main/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 DEFAULT_MODEL_FILE="Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf"
 LLAMA_CPP_REPO="https://github.com/ggerganov/llama.cpp.git"
 LLAMA_CPP_DIR="/opt/llama.cpp"
@@ -59,14 +64,17 @@ LLAMA_CPP_DIR="/opt/llama.cpp"
 SERVICE_NAME="ai-engine"
 SYSTEMD_SERVICE="/etc/systemd/system/${SERVICE_NAME}.service"
 SWITCH_SCRIPT="/usr/local/bin/switch-model.sh"
-GFX_VERSION="11.5.0"   # gfx1150 native — rocBLAS 7.14.0 supports it
+GFX_VERSION="11.5.0"   # gfx1150 native — rocBLAS 7.14.x / 10.0.x supports it
 ROCM_PATH="/opt/rocm"
-ROCM_VERSION="7.14.0"
+# Unpinned: tracks latest stable 7.14.x by default (7.14.1 2026-09-02). Override via env:
+#   ROCM_VERSION=10.0.0 bash configure-ai-engine-inside-lxc.sh
+#   ROCM_VERSION=7.14.1 ./deploy-hlh-ai-engine.sh  (forwarded via pct exec env)
+ROCM_VERSION="${ROCM_VERSION:-7.14.1}"
 DFLASH2_DRAFT_FILE="Qwen3.8-27B-DFlash2-Q4_K_M.gguf"
 DFLASH2_DRAFT_URL="https://huggingface.co/z-lab/Qwen3.8-27B-DFlash2-GGUF/resolve/main/Qwen3.8-27B-DFlash2-Q4_K_M.gguf?download=true"
 
 # --- 1. BASE DEPENDENCIES ---
-echo "[1/7] Installing base dependencies..."
+echo "[1/7] Installing base dependencies (ROCm ${ROCM_VERSION}, backend HIP+Vulkan, gfx1150)..."
 apt-get update
 apt-get install -y --no-install-recommends \
   build-essential git cmake pkg-config \
@@ -74,8 +82,15 @@ apt-get install -y --no-install-recommends \
   libopenblas-dev libssl-dev ca-certificates gnupg \
   openssh-server
 
-# --- 1b. ADD ROCM 7.14.0 REPO ---
-echo "[1/7] Adding ROCm ${ROCM_VERSION} repository..."
+# Vulkan build deps (restored for dual HIP+Vulkan; provides glslc + SPIR-V headers)
+echo "[1/7] Installing Vulkan build dependencies (for GGML_VULKAN=ON, RADV GFX1150)..."
+apt-get install -y --no-install-recommends \
+  libvulkan-dev glslang-tools spirv-tools vulkan-tools 2>&1 || {
+  echo "WARNING: Vulkan deps install had issues (may be missing glslang-tools); continuing — cmake will surface errors"
+}
+
+# --- 1b. ADD ROCM ${ROCM_VERSION} REPO (unpinned, tracks latest 7.14.x / 10.x) ---
+echo "[1/7] Adding ROCm ${ROCM_VERSION} repository (override: ROCM_VERSION=x.y.z)..."
 mkdir -p /etc/apt/keyrings
 wget -qO - https://repo.amd.com/rocm/packages-multi-arch/gpg/rocm.gpg | \
   gpg --dearmor | tee /etc/apt/keyrings/amdrocm.gpg > /dev/null
@@ -97,9 +112,12 @@ PIN
 apt-get remove -y rocminfo 2>/dev/null || true
 
 apt-get update
+# ROCm package names encode major.minor (e.g. amdrocm7.14-gfx1150 for 7.14.1, amdrocm10.0 for 10.0.0)
+ROCM_MM="$(echo "${ROCM_VERSION}" | cut -d. -f1,2)"
+echo "[1/7] Installing ROCm ${ROCM_VERSION} packages: amdrocm${ROCM_MM}-gfx1150 + amdrocm-core-dev${ROCM_MM}-gfx1150 ..."
 apt-get install -y --no-install-recommends \
-  amdrocm7.14-gfx1150 \
-  amdrocm-core-dev7.14-gfx1150
+  "amdrocm${ROCM_MM}-gfx1150" \
+  "amdrocm-core-dev${ROCM_MM}-gfx1150"
 
 # llama.cpp HIP builds require the HIP CMake package (hip-lang-config.cmake),
 # which is provided by ROCm developer components.
@@ -161,15 +179,23 @@ source /etc/profile.d/rocm.env
 set -u
 
 # --- Pre-Build Checks ---
-echo "[1/7] Verifying HIP tools..."
+echo "[1/7] Verifying HIP tools (ROCm ${ROCM_VERSION})..."
 HIPCXX_PATH="$(hipconfig -l)/clang"
 HIP_PATH_VAL="$(hipconfig -R)"
 echo "HIP clang path: ${HIPCXX_PATH}"
 echo "HIP root path:  ${HIP_PATH_VAL}"
 [ -f "${HIPCXX_PATH}" ] || { echo "ERROR: HIP clang not found at ${HIPCXX_PATH}"; exit 1; }
 
-# --- 2. BUILD LLAMA.CPP (ROCm only, latest master) ---
-echo "[2/7] Cloning and building llama.cpp (ROCm gfx1150, latest master)..."
+echo "[1/7] Verifying Vulkan tools (for dual backend)..."
+if command -v glslc >/dev/null 2>&1; then
+  echo "glslc: $(glslc --version 2>&1 | head -1)"
+else
+  echo "WARNING: glslc not found — Vulkan build will fail; ensure glslang-tools installed"
+fi
+vulkaninfo --summary 2>&1 | head -20 || echo "NOTE: vulkaninfo not yet useful (driver inside LXC needs /dev/dri passthrough; will be available after deploy)"
+
+# --- 2. BUILD LLAMA.CPP (ROCm+Vulkan dual, latest master, gfx1150-only chip) ---
+echo "[2/7] Cloning and building llama.cpp (ROCm ${ROCM_VERSION} + Vulkan gfx1150, latest master, dual HIP+Vulkan)..."
 if [ ! -d "$LLAMA_CPP_DIR" ]; then
   git clone --depth=1 "$LLAMA_CPP_REPO" "$LLAMA_CPP_DIR"
 fi
@@ -188,31 +214,41 @@ cd "$LLAMA_CPP_DIR"
 HIPCXX="${HIPCXX_PATH}" HIP_PATH="${HIP_PATH_VAL}" \
 cmake -S . -B build \
   -DGGML_HIP=ON \
-  -DGGML_VULKAN=OFF \
+  -DGGML_VULKAN=ON \
   -DAMDGPU_TARGETS=gfx1150 \
   -DCMAKE_BUILD_TYPE=Release
 
-echo "[2/7] Checking HIP CMake configuration..."
+echo "[2/7] Checking HIP+Vulkan CMake configuration..."
 if [ ! -f build/CMakeCache.txt ] || ! grep -qi 'GGML_HIP=TRUE' build/CMakeCache.txt 2>/dev/null; then
   echo "WARNING: HIP may not be enabled in cmake cache; re-running cmake with explicit HIP paths"
   HIPCXX="${HIPCXX_PATH}" HIP_PATH="${HIP_PATH_VAL}" \
   cmake -S . -B build \
     -DGGML_HIP=ON \
-    -DGGML_VULKAN=OFF \
+    -DGGML_VULKAN=ON \
     -DAMDGPU_TARGETS=gfx1150 \
     -DCMAKE_BUILD_TYPE=Release
 fi
+if ! grep -qi 'GGML_VULKAN=TRUE' build/CMakeCache.txt 2>/dev/null; then
+  echo "WARNING: Vulkan may not be enabled in cmake cache; ensure libvulkan-dev + glslang-tools installed"
+fi
 
-echo "[2/7] Building... (this can take 10-25 minutes with 12 cores)"
+echo "[2/7] Building... (this can take 10-25 minutes with 12 cores, dual HIP+Vulkan)"
 cmake --build build --config Release -j$(nproc)
 
-# Verify the binary has HIP support
-BINARY_HIP=$(file build/bin/llama-server 2>/dev/null | grep -i hip || true)
-if [ -z "$BINARY_HIP" ]; then
-  echo "WARNING: llama-server binary may not have HIP/ROCm support built in"
-  echo "Checking for HIP-related symbols..."
-  nm build/bin/llama-server 2>/dev/null | grep -i hip || true
+# Verify the binary has HIP + Vulkan support (HIP is ROCm; Vulkan is RADV on gfx1150, gfx1150-only chip)
+echo "[2/7] Verifying dual backend symbols..."
+if nm build/bin/llama-server 2>/dev/null | grep -qi hip; then
+  echo "OK: HIP/ROCm symbols found in llama-server binary"
+else
+  echo "WARNING: No HIP symbols found in llama-server binary; HIP support may not be enabled"
 fi
+if nm build/bin/llama-server 2>/dev/null | grep -qi vulkan; then
+  echo "OK: Vulkan symbols found in llama-server binary"
+else
+  echo "WARNING: No Vulkan symbols found; Vulkan support may not be enabled"
+fi
+# vulkaninfo check inside LXC (needs /dev/dri passthrough; may be empty at build time)
+vulkaninfo --summary 2>&1 | head -30 || true
 
 # --- 3. MODEL STORAGE & DOWNLOAD ---
 echo "[3/7] Setting up model directory..."
@@ -706,15 +742,20 @@ echo ""
 echo "[llama-server version]"
 ${LLAMA_CPP_DIR}/build/bin/llama-server --version || true
 echo ""
-# Verify HIP/ROCm support in the binary
-echo "Checking HIP build support..."
-if nm "${LLAMA_CPP_DIR}/build/bin/llama-server" 2>/dev/null | grep -q i hip; then
-  echo "OK: HIP symbols found in llama-server binary"
+# Verify HIP/ROCm + Vulkan support in the binary
+echo "Checking HIP+Vulkan build support (HIP is ROCm; Vulkan is RADV, gfx1150-only)..."
+if nm "${LLAMA_CPP_DIR}/build/bin/llama-server" 2>/dev/null | grep -qi hip; then
+  echo "OK: HIP/ROCm symbols found in llama-server binary"
 else
   echo "WARNING: No HIP symbols found in llama-server binary; HIP support may not be enabled"
 fi
+if nm "${LLAMA_CPP_DIR}/build/bin/llama-server" 2>/dev/null | grep -qi vulkan; then
+  echo "OK: Vulkan symbols found in llama-server binary"
+else
+  echo "WARNING: No Vulkan symbols found; Vulkan support may not be enabled"
+fi
 # Verify ROCm environment variables are set for the running process
-echo "Checking ROCm environment..."
+echo "Checking ROCm environment (ROCm ${ROCM_VERSION})..."
 if [ -n "${HSA_OVERRIDE_GFX_VERSION:-}" ]; then
   echo "OK: HSA_OVERRIDE_GFX_VERSION=${HSA_OVERRIDE_GFX_VERSION} is set"
 else
@@ -729,8 +770,11 @@ echo ""
 echo "[Service status]"
 systemctl status "$SERVICE_NAME" --no-pager
 echo ""
-echo "[Bootstrap complete - v0.9.2]"
-echo "  Native llama.cpp web UI : http://<container-ip>:80"
-echo "  Switch models with      : switch-model.sh"
-echo "  GPU device              : gfx1150 (AMD Radeon 890M)"
-echo "  ROCm version            : ${ROCM_VERSION}"
+echo "[Bootstrap complete - v0.9.3]"
+echo "  Native llama.cpp web UI : http://<container-ip>:80 (HIP+Vulkan dual, gfx1150-only chip)"
+echo "  Switch models with      : switch-model.sh (MTP/ngram/none; HIP default, Vulkan via RADV_PERFTEST=nogttspill)"
+echo "  GPU device              : gfx1150 (AMD Radeon 890M) — ROCm HIP + Vulkan RADV"
+echo "  ROCm version            : ${ROCM_VERSION} (unpinned; override: ROCM_VERSION=x.y.z ./deploy-hlh-ai-engine.sh)"
+echo "  Backend                 : HIP+Vulkan dual (GGML_HIP=ON + GGML_VULKAN=ON, AMDGPU_TARGETS=gfx1150)"
+echo "  Verify HIP              : rocm-smi && hipconfig --version"
+echo "  Verify Vulkan           : vulkaninfo --summary && RADV_PERFTEST=nogttspill llama-bench -dev Vulkan0,ROCm0"
