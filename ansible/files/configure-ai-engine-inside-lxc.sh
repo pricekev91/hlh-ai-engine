@@ -85,13 +85,14 @@ apt-get install -y --no-install-recommends \
 
 # Vulkan build deps (restored for dual HIP+Vulkan; provides glslc + SPIR-V headers)
 # glslc is from package 'glslc' (shaderc) on noble, NOT glslang-tools — FindVulkan needs glslc specifically.
+# SPIRV-Headers is needed for ggml/src/ggml-vulkan/CMakeLists.txt:14 (SPIRV-HeadersConfig.cmake).
 echo "[1/7] Installing Vulkan build dependencies (for GGML_VULKAN=ON, RADV GFX1150)..."
 apt-get install -y --no-install-recommends \
-  libvulkan-dev glslang-tools spirv-tools vulkan-tools glslc 2>&1 || {
-  echo "WARNING: Vulkan deps install had issues (trying glslc from shaderc); attempting fallback"
-  apt-get install -y --no-install-recommends glslc 2>&1 || true
+  libvulkan-dev glslang-tools spirv-tools spirv-headers vulkan-tools glslc 2>&1 || {
+  echo "WARNING: Vulkan deps install had issues (trying fallback packages)"
+  apt-get install -y --no-install-recommends glslc spirv-headers 2>&1 || true
 }
-# Verify glslc now exists for FindVulkan (ggml/src/ggml-vulkan/CMakeLists.txt:9)
+# Verify glslc + SPIRV-Headers now exist for FindVulkan (ggml/src/ggml-vulkan/CMakeLists.txt:9,14)
 if ! command -v glslc >/dev/null 2>&1; then
   echo "ERROR: glslc still not found after Vulkan deps install (FindVulkan will fail with 'Could NOT find Vulkan (missing: glslc)')" >&2
   echo "Attempting to locate any glslc package..." >&2
@@ -99,6 +100,14 @@ if ! command -v glslc >/dev/null 2>&1; then
   # Do not exit yet — cmake will surface clear error, but warn here for faster diagnosis
 else
   echo "glslc: $(command -v glslc) $(glslc --version 2>&1 | head -1)"
+fi
+if ! dpkg -l | grep -qi spirv-headers; then
+  echo "WARNING: spirv-headers package not installed — CMake will fail at ggml-vulkan:14 (SPIRV-HeadersConfig.cmake missing)" >&2
+  apt-cache search spirv-headers 2>&1 | head -20 >&2 || true
+else
+  echo "spirv-headers: $(dpkg -l | grep spirv-headers | awk '{print $2, $3}')"
+  # Verify CMake config exists
+  find /usr -name "SPIRV-HeadersConfig.cmake" -o -name "spirv-headers-config.cmake" 2>/dev/null | head -5 || echo "NOTE: SPIRV-HeadersConfig.cmake not found in /usr (will still try cmake)"
 fi
 
 # --- 1b. ADD ROCM ${ROCM_VERSION} REPO (unpinned, tracks latest 7.14.x / 10.x) ---
