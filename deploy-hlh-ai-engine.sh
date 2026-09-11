@@ -118,8 +118,11 @@ cat >> "/etc/pve/lxc/${LXC_ID}.conf" <<'LXCCONF'
 lxc.cgroup2.devices.allow: c 226:1 rwm
 lxc.cgroup2.devices.allow: c 226:129 rwm
 lxc.cgroup2.devices.allow: c 511:0 rwm
-# Mount empty /dev/dri dir, then the specific 890M nodes only
-lxc.mount.entry: none dev/dri none bind,optional,create=dir
+# Mount only the 890M nodes; /dev/dri is created automatically by LXC.
+# NOTE: Do NOT use 'lxc.mount.entry: none dev/dri ...' — on Proxmox 9.x that
+# incorrectly mounts the host root (rpool/ROOT/pve-1) onto /dev/dri inside the
+# container (seen as rpool/ROOT/pve-1 /dev/dri zfs in /proc/mounts), breaking
+# DRM and causing rocminfo 'Invalid argument' and rocm-smi 'No GPUs'.
 lxc.mount.entry: /dev/dri/card1 dev/dri/card1 none bind,optional,create=file
 lxc.mount.entry: /dev/dri/renderD129 dev/dri/renderD129 none bind,optional,create=file
 lxc.mount.entry: /dev/kfd dev/kfd none bind,optional,create=file

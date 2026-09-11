@@ -83,14 +83,15 @@ apt-get install -y --no-install-recommends \
   libopenblas-dev libssl-dev ca-certificates gnupg \
   openssh-server
 
-# Vulkan build deps (restored for dual HIP+Vulkan; provides glslc + SPIR-V headers)
+# Vulkan build deps (restored for dual HIP+Vulkan; provides glslc + SPIR-V headers + RADV driver)
 # glslc is from package 'glslc' (shaderc) on noble, NOT glslang-tools — FindVulkan needs glslc specifically.
 # SPIRV-Headers is needed for ggml/src/ggml-vulkan/CMakeLists.txt:14 (SPIRV-HeadersConfig.cmake).
+# mesa-vulkan-drivers provides RADV for gfx1150; without it vulkaninfo fails 'Found no drivers!' and llama.cpp Vulkan backend is unusable.
 echo "[1/7] Installing Vulkan build dependencies (for GGML_VULKAN=ON, RADV GFX1150)..."
 apt-get install -y --no-install-recommends \
-  libvulkan-dev glslang-tools spirv-tools spirv-headers vulkan-tools glslc 2>&1 || {
+  libvulkan-dev glslang-tools spirv-tools spirv-headers vulkan-tools glslc mesa-vulkan-drivers 2>&1 || {
   echo "WARNING: Vulkan deps install had issues (trying fallback packages)"
-  apt-get install -y --no-install-recommends glslc spirv-headers 2>&1 || true
+  apt-get install -y --no-install-recommends glslc spirv-headers mesa-vulkan-drivers 2>&1 || true
 }
 # Verify glslc + SPIRV-Headers now exist for FindVulkan (ggml/src/ggml-vulkan/CMakeLists.txt:9,14)
 if ! command -v glslc >/dev/null 2>&1; then
