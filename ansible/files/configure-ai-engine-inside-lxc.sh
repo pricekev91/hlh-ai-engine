@@ -84,11 +84,22 @@ apt-get install -y --no-install-recommends \
   openssh-server
 
 # Vulkan build deps (restored for dual HIP+Vulkan; provides glslc + SPIR-V headers)
+# glslc is from package 'glslc' (shaderc) on noble, NOT glslang-tools — FindVulkan needs glslc specifically.
 echo "[1/7] Installing Vulkan build dependencies (for GGML_VULKAN=ON, RADV GFX1150)..."
 apt-get install -y --no-install-recommends \
-  libvulkan-dev glslang-tools spirv-tools vulkan-tools 2>&1 || {
-  echo "WARNING: Vulkan deps install had issues (may be missing glslang-tools); continuing — cmake will surface errors"
+  libvulkan-dev glslang-tools spirv-tools vulkan-tools glslc 2>&1 || {
+  echo "WARNING: Vulkan deps install had issues (trying glslc from shaderc); attempting fallback"
+  apt-get install -y --no-install-recommends glslc 2>&1 || true
 }
+# Verify glslc now exists for FindVulkan (ggml/src/ggml-vulkan/CMakeLists.txt:9)
+if ! command -v glslc >/dev/null 2>&1; then
+  echo "ERROR: glslc still not found after Vulkan deps install (FindVulkan will fail with 'Could NOT find Vulkan (missing: glslc)')" >&2
+  echo "Attempting to locate any glslc package..." >&2
+  apt-cache search glslc 2>&1 | head -20 >&2 || true
+  # Do not exit yet — cmake will surface clear error, but warn here for faster diagnosis
+else
+  echo "glslc: $(command -v glslc) $(glslc --version 2>&1 | head -1)"
+fi
 
 # --- 1b. ADD ROCM ${ROCM_VERSION} REPO (unpinned, tracks latest 7.14.x / 10.x) ---
 echo "[1/7] Adding ROCm ${ROCM_VERSION} repository (override: ROCM_VERSION=x.y.z)..."
