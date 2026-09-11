@@ -59,6 +59,133 @@ echo "  Backend      : ${LLAMA_BACKEND} — llama.cpp built with GGML_HIP=ON + G
 echo "  Model dir    : ${MODEL_HOST_DIR} -> ${MODEL_LXC_DIR}"
 echo ""
 
+# --- Host ROCm upgrade (prox01) — 7.14 is old vs 10.0.0 ---
+# The Proxmox host driver must match the LXC user-space ROCm major. Host was on
+# 7.14.0 (packages-multi-arch/debian13) while LXC 112 wants 10.0.0 (stable.repo.amd.com).
+# Mismatch causes inside LXC: rocm-smi 'No GPUs', rocminfo 'Invalid argument', ggml 'no ROCm device'.
+# Prompt and upgrade the host first, before LXC creation.
+get_host_rocm_version() {
+  local ver=""
+  # Prefer installed package version (e.g. 7.14.0-3, 10.0.0-4)
+  ver="$(dpkg-query -W -f='${Version}' amdrocm-core 2>/dev/null | cut -d- -f1)"
+  if [[ -z "$ver" ]]; then
+    ver="$(dpkg -l 2>/dev/null | awk '/^ii[ ]+amdrocm-core7/{print $3}' | head -1 | cut -d- -f1)"
+  fi
+  if [[ -z "$ver" ]]; then
+    ver="$(dpkg -l 2>/dev/null | awk '/^ii[ ]+amdrocm7\.14/{print $3}' | head -1 | cut -d- -f1)"
+  fi
+  # Fallback: rocm-smi lib version
+  if [[ -z "$ver" ]]; then
+    ver="$(rocm-smi --version 2>/dev/null | grep -oP '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+  fi
+  echo "${ver:-unknown}"
+}
+
+HOST_ROCM_VERSION="$(get_host_rocm_version)"
+HOST_ROCM_MAJOR="$(echo "${HOST_ROCM_VERSION}" | cut -d. -f1)"
+REQ_MAJOR="$(echo "${ROCM_VERSION}" | cut -d. -f1)"
+HOST_CODENAME="$(. /etc/os-release 2>/dev/null; echo "${VERSION_CODENAME:-}")"
+if [[ -z "${HOST_CODENAME}" ]]; then
+  HOST_CODENAME="debian13"
+  if grep -qi "trixie" /etc/os-release 2>/dev/null; then HOST_CODENAME="debian13"; fi
+  if grep -qi "bookworm" /etc/os-release 2>/dev/null; then HOST_CODENAME="debian12"; fi
+fi
+# Detect codename from existing rocm.list if present (more reliable than os-release on PVE)
+if [[ -f /etc/apt/sources.list.d/rocm.list ]]; then
+  if grep -q "stable.repo.amd.com" /etc/apt/sources.list.d/rocm.list 2>/dev/null; then
+    : # already on stable
+    :
+  fi
+fi
+
+echo "  Host ROCm    : ${HOST_ROCM_VERSION} (host driver)"
+echo "  Host OS      : ${HOST_CODENAME} ($(cat /etc/os-release 2>/dev/null | grep PRETTY_NAME | cut -d= -f2 | tr -d '\"'))"
+echo ""
+
+should_upgrade_host=false
+if [[ "${HOST_ROCM_VERSION}" == "unknown" ]]; then
+  echo "WARNING: Could not detect host ROCm version — will attempt to install ${ROCM_VERSION} on host."
+  should_upgrade_host=true
+elif [[ "${HOST_ROCM_MAJOR}" != "${REQ_MAJOR}" ]]; then
+  echo "Host ROCm major ${HOST_ROCM_MAJOR} != requested ${REQ_MAJOR} (${ROCM_VERSION}). LXC needs matching host driver."
+  should_upgrade_host=true
+elif dpkg --compare-versions "${HOST_ROCM_VERSION}" lt "${ROCM_VERSION}" 2>/dev/null; then
+  echo "Host ROCm ${HOST_ROCM_VERSION} < requested ${ROCM_VERSION} — upgrade recommended (7.14 is old vs 10.0.0)."
+  should_upgrade_host=true
+fi
+
+if [[ "${should_upgrade_host}" == "true" ]]; then
+  echo ""
+  echo "Host ROCm upgrade required to ${ROCM_VERSION} before LXC will see the GPU."
+  echo "  Current host: ${HOST_ROCM_VERSION} -> target: ${ROCM_VERSION}"
+  echo "  This will:"
+  echo "    - Switch host repo to https://stable.repo.amd.com/rocm/core/packages/${HOST_CODENAME} for 10.x"
+  echo "      (or https://repo.amd.com/rocm/packages-multi-arch/${HOST_CODENAME} for 7.x)"
+  echo "    - apt update && apt install amdrocm${REQ_MAJOR:+${ROCM_VERSION%.*}} host packages"
+  echo "    - May require reboot if amdgpu DKMS/firmware changes"
+  echo ""
+  printf 'Upgrade host ROCm to %s now? [y/N] ' "${ROCM_VERSION}"
+  read -r _ans
+  case "${_ans}" in
+    y|Y|yes|YES)
+      echo "[0/6] Upgrading host ROCm ${HOST_ROCM_VERSION} -> ${ROCM_VERSION} ..."
+      mkdir -p /etc/apt/keyrings
+      if [[ "${REQ_MAJOR}" -ge 10 ]] 2>/dev/null; then
+        echo "  Using stable.repo.amd.com for ROCm 10.x (host ${HOST_CODENAME})"
+        wget -qO - https://stable.repo.amd.com/rocm/gpg/packages.gpg | gpg --dearmor | tee /etc/apt/keyrings/amdrocm.gpg > /dev/null
+        tee /etc/apt/sources.list.d/rocm.list << EOF
+deb [arch=amd64 signed-by=/etc/apt/keyrings/amdrocm.gpg] https://stable.repo.amd.com/rocm/core/packages/${HOST_CODENAME} stable main
+EOF
+        tee /etc/apt/preferences.d/rocm-pin << 'PIN'
+Package: *
+Pin: origin stable.repo.amd.com
+Pin-Priority: 1001
+PIN
+      else
+        echo "  Using repo.amd.com/packages-multi-arch for ROCm 7.x (host ${HOST_CODENAME})"
+        wget -qO - https://repo.amd.com/rocm/packages-multi-arch/gpg/rocm.gpg | gpg --dearmor | tee /etc/apt/keyrings/amdrocm.gpg > /dev/null
+        tee /etc/apt/sources.list.d/rocm.list << EOF
+deb [arch=amd64 signed-by=/etc/apt/keyrings/amdrocm.gpg] https://repo.amd.com/rocm/packages-multi-arch/${HOST_CODENAME} stable main
+EOF
+        tee /etc/apt/preferences.d/rocm-pin << 'PIN'
+Package: *
+Pin: origin repo.radeon.com
+Pin-Priority: 1001
+PIN
+      fi
+      echo 'APT::Key::GPGCommand "/usr/bin/gpg";' > /etc/apt/apt.conf.d/99gpg-override || true
+      apt-get update
+      ROCM_MM_HOST="$(echo "${ROCM_VERSION}" | cut -d. -f1,2)"
+      echo "  Installing host packages for ROCm ${ROCM_VERSION} (try amdrocm${ROCM_MM_HOST}-gfx1150, fallback amdrocm${ROCM_MM_HOST}) ..."
+      if ! apt-get install -y --no-install-recommends "amdrocm${ROCM_MM_HOST}-gfx1150" "amdrocm-core${ROCM_MM_HOST}-gfx1150" 2>&1; then
+        echo "  Per-GPU host package not found, trying generic amdrocm${ROCM_MM_HOST} ..."
+        apt-get install -y --no-install-recommends "amdrocm${ROCM_MM_HOST}" "amdrocm-core${ROCM_MM_HOST}" || {
+          echo "  Trying generic amdrocm metapackage ..."
+          apt-get install -y --no-install-recommends amdrocm || true
+        }
+      fi
+      # Also ensure amdgpu dkms if needed
+      if ! dkms status 2>&1 | grep -q amdgpu; then
+        echo "  amdgpu dkms not found — installing amdgpu-dkms if available ..."
+        apt-get install -y --no-install-recommends amdgpu-dkms 2>&1 || true
+      fi
+      echo "  Host ROCm upgrade done. New host version: $(get_host_rocm_version)"
+      echo "  Host rocm-smi:"
+      rocm-smi 2>&1 | head -40 || true
+      # Check if reboot needed (amdgpu/kfd changed)
+      if dmesg 2>&1 | tail -5 | grep -qi "amdgpu.*firmware"; then
+        echo "  NOTE: amdgpu firmware may have changed — reboot recommended if LXC still shows 'no gpu node'."
+      fi
+      echo ""
+      ;;
+    *)
+      echo "Skipping host ROCm upgrade — LXC will be built with ${ROCM_VERSION} but may fail with 'no ROCm device' if host stays on ${HOST_ROCM_VERSION}."
+      echo "You can re-run with ROCM_VERSION=${HOST_ROCM_VERSION} ./deploy-hlh-ai-engine.sh to match host, or re-run and answer 'y' to upgrade host."
+      echo ""
+      ;;
+  esac
+fi
+
 confirm_existing_lxc_delete() {
 	local answer
 

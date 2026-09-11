@@ -30,13 +30,14 @@ BrickCipher, VoxChimera).
 
 ## Quick Start
 
-Deploy the AI engine LXC on the Proxmox host (prints ROCm version + backend):
+Deploy the AI engine LXC on the Proxmox host (upgrades host ROCm if needed, then LXC — always prints version, never pinned):
 
 ```bash
-./deploy-hlh-ai-engine.sh              # default 10.0.0 (latest 2026-08-26) — header shows ROCm version
+./deploy-hlh-ai-engine.sh              # default 10.0.0 (latest 2026-08-26) — prompts to upgrade host 7.14→10.0 if needed
 # Override ROCm version (never pinned):
-ROCM_VERSION=7.14.1 ./deploy-hlh-ai-engine.sh   # pin to older stable if needed
+ROCM_VERSION=7.14.1 ./deploy-hlh-ai-engine.sh   # stay on older stable to match host without upgrade
 # Bootstrap also respects: ROCM_VERSION=10.0.0 bash ansible/files/configure-ai-engine-inside-lxc.sh
+# Host must match LXC major (7.x vs 10.x): deploy now checks host $(get_host_rocm_version) and prompts to upgrade host via stable.repo.amd.com
 ```
 
 Reconfigure an existing LXC via Ansible:
