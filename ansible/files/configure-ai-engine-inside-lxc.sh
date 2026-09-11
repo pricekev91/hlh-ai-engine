@@ -93,32 +93,60 @@ apt-get install -y --no-install-recommends \
 # --- 1b. ADD ROCM ${ROCM_VERSION} REPO (unpinned, tracks latest 7.14.x / 10.x) ---
 echo "[1/7] Adding ROCm ${ROCM_VERSION} repository (override: ROCM_VERSION=x.y.z)..."
 mkdir -p /etc/apt/keyrings
-wget -qO - https://repo.amd.com/rocm/packages-multi-arch/gpg/rocm.gpg | \
-  gpg --dearmor | tee /etc/apt/keyrings/amdrocm.gpg > /dev/null
-
-tee /etc/apt/sources.list.d/rocm.list << EOF
+# ROCm 10.x uses the new stable repo (https://stable.repo.amd.com/rocm/core/packages); 7.x uses the legacy multi-arch repo.
+# Keep both repo URLs available and pick by major version — 10.x was released 2026-08-26 and moved to stable.repo.amd.com.
+ROCM_MAJOR="$(echo "${ROCM_VERSION}" | cut -d. -f1)"
+if [ "${ROCM_MAJOR}" -ge 10 ] 2>/dev/null; then
+  echo "[1/7] ROCm ${ROCM_VERSION} >=10 — using stable.repo.amd.com (was repo.amd.com/packages-multi-arch for 7.x)"
+  wget -qO - https://stable.repo.amd.com/rocm/gpg/packages.gpg | \
+    gpg --dearmor | tee /etc/apt/keyrings/amdrocm.gpg > /dev/null
+  tee /etc/apt/sources.list.d/rocm.list << EOF
+deb [arch=amd64 signed-by=/etc/apt/keyrings/amdrocm.gpg] https://stable.repo.amd.com/rocm/core/packages/ubuntu2404 stable main
+EOF
+  # Stable repo origin is stable.repo.amd.com (pin that instead of repo.radeon.com for 10.x)
+  tee /etc/apt/preferences.d/rocm-pin << 'PIN'
+Package: *
+Pin: origin stable.repo.amd.com
+Pin-Priority: 1001
+PIN
+else
+  wget -qO - https://repo.amd.com/rocm/packages-multi-arch/gpg/rocm.gpg | \
+    gpg --dearmor | tee /etc/apt/keyrings/amdrocm.gpg > /dev/null
+  tee /etc/apt/sources.list.d/rocm.list << EOF
 deb [arch=amd64 signed-by=/etc/apt/keyrings/amdrocm.gpg] https://repo.amd.com/rocm/packages-multi-arch/ubuntu2404 stable main
 EOF
-
-echo 'APT::Key::GPGCommand "/usr/bin/gpg";' > /etc/apt/apt.conf.d/99gpg-override
-
-# Pin AMD repo over Ubuntu's bundled ROCm packages
-tee /etc/apt/preferences.d/rocm-pin << 'PIN'
+  tee /etc/apt/preferences.d/rocm-pin << 'PIN'
 Package: *
 Pin: origin repo.radeon.com
 Pin-Priority: 1001
 PIN
+fi
+
+echo 'APT::Key::GPGCommand "/usr/bin/gpg";' > /etc/apt/apt.conf.d/99gpg-override
 
 # Remove Ubuntu's conflicting rocminfo
 apt-get remove -y rocminfo 2>/dev/null || true
 
 apt-get update
-# ROCm package names encode major.minor (e.g. amdrocm7.14-gfx1150 for 7.14.1, amdrocm10.0 for 10.0.0)
+# ROCm package names encode major.minor (e.g. amdrocm7.14-gfx1150 for 7.14.1, amdrocm10.0 for 10.0.0).
+# For 10.x the per-GPU package may be named amdrocm10.0-gfx1150 or may be a generic amdrocm10.0; try per-GPU first, fall back to generic.
 ROCM_MM="$(echo "${ROCM_VERSION}" | cut -d. -f1,2)"
 echo "[1/7] Installing ROCm ${ROCM_VERSION} packages: amdrocm${ROCM_MM}-gfx1150 + amdrocm-core-dev${ROCM_MM}-gfx1150 ..."
-apt-get install -y --no-install-recommends \
+if ! apt-get install -y --no-install-recommends \
   "amdrocm${ROCM_MM}-gfx1150" \
-  "amdrocm-core-dev${ROCM_MM}-gfx1150"
+  "amdrocm-core-dev${ROCM_MM}-gfx1150"; then
+  echo "WARNING: per-GPU package amdrocm${ROCM_MM}-gfx1150 not found (common for 10.x); trying generic amdrocm${ROCM_MM} + amdrocm-core-dev${ROCM_MM} ..."
+  apt-get install -y --no-install-recommends \
+    "amdrocm${ROCM_MM}" \
+    "amdrocm-core-dev${ROCM_MM}" || {
+      echo "ERROR: Neither per-GPU nor generic ROCm ${ROCM_VERSION} packages found." >&2
+      echo "Available amdrocm packages:" >&2
+      apt-cache search "^amdrocm${ROCM_MM}" 2>&1 | head -100 >&2 || true
+      apt-cache search "^amdrocm" 2>&1 | head -100 >&2 || true
+      exit 1
+    }
+  echo "Installed generic amdrocm${ROCM_MM} (no per-GPU suffix) — verify gfx1150 is in this bundle via 'rocm-smi' + 'rocminfo | grep gfx'"
+fi
 
 # llama.cpp HIP builds require the HIP CMake package (hip-lang-config.cmake),
 # which is provided by ROCm developer components.
