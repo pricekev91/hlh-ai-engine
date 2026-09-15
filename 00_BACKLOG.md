@@ -8,7 +8,7 @@ in the codebase.
 - Add GPU memory utilization monitoring script (`rocm-smi` parsing + alerting; `vulkaninfo` + `RADV_PERFTEST=nogttspill` as Vulkan complement)
 - Add automatic model eviction when GPU memory is low (consider Vulkan `88G` UMA vs HIP `48G` split)
 - Support multi-GPU workloads (future hardware upgrade)
-- Track ROCm version compatibility matrix across Proxmox kernel updates (now unpinned `ROCM_VERSION` `7.14.1`→`10.0.0`; matrix still needed)
+- Track ROCm version compatibility matrix across Proxmox kernel updates (now unpinned `ROCM_VERSION` `10.0.0`; matrix still needed)
 
 ## Model Management
 

@@ -10,7 +10,7 @@ engine is a shared AI inference service consumed by all application repos (Trash
 BrickCipher, VoxChimera).
 
 - LXC 112, hostname `hlh-ai-engine`, IP `192.168.1.12` (gateway `192.168.1.1`)
-- ROCm `10.0.0` default (2026-08-26 latest; unpinned — override: `ROCM_VERSION=7.14.1 ./deploy-hlh-ai-engine.sh`) with AMD RDNA 3 890M iGPU (gfx1150, Strix Halo) — deploy always prints version, never pinned
+- ROCm `10.0.0` default (2026-08-26 latest; unpinned — override: `ROCM_VERSION=7.14.1 ./deploy-hlh-ai-engine.sh`) with AMD RDNA 3.5 890M iGPU (gfx1150, Strix Halo) — deploy always prints version, never pinned
 - llama.cpp **dual backend** `HIP+Vulkan` (`GGML_HIP=ON + GGML_VULKAN=ON`, `AMDGPU_TARGETS=gfx1150`, `HSA_OVERRIDE_GFX_VERSION=11.5.0`) — HIP is ROCm; Vulkan is RADV; no inference perf hit vs pure HIP
 - llama.cpp backend serving native web UI on port `80` (`/health` + `/v1` OpenAI API)
 - Model storage on `RaidZ1-6TB` ZFS pool (`/srv/ai/models` host → `/srv/ai/models` LXC bind mount, same path)
@@ -19,7 +19,7 @@ BrickCipher, VoxChimera).
 
 **Owns:**
 - LXC lifecycle (create, configure, start) on Proxmox (`112` privileged `nesting,keyctl`, `48G RAM`, `12 cores`, `64G rootfs` on `RaidZ1-6TB`)
-- GPU passthrough configuration for ROCm **and** Vulkan (`/dev/dri/card1` `226:1`, `renderD129` `226:129`, `/dev/kfd` `511:0` — 890M `gfx1150` only)
+- GPU passthrough configuration for ROCm **and** Vulkan (`/dev/dri/card0` `226:1`, `renderD128` `226:128`, `/dev/kfd` `511:0` (ROCm 7) + `234:0` (ROCm 10) — 890M `gfx1150` only; corrected from `card1`/`renderD129` in `1010f5e`)
 - Model storage mount wiring (`--mp0 /srv/ai/models,mp=/srv/ai/models` `775`)
 - In-container ROCm (`amdrocm${ROCM_MM}-gfx1150`) + Vulkan (`libvulkan-dev`, `glslang-tools` `glslc`) and llama.cpp dual `HIP+Vulkan` installation
 
@@ -60,7 +60,7 @@ RADV_PERFTEST=nogttspill llama-bench -m /srv/ai/models/Qwen3-Coder-30B-A3B-Instr
 Deployment and configuration are separate phases:
 
 1. **Provisioning**: `deploy-hlh-ai-engine.sh` creates privileged LXC `112`, wires GPU passthrough
-   (`card1`+`renderD129`+`kfd` only — RX480 `gfx803` excluded), prints `ROCm ${ROCM_VERSION}` + `HIP+Vulkan gfx1150`,
+   (`card0`+`renderD128`+`kfd` only — `226:1`, `226:128`, `511:0`+`234:0`; RX480 `gfx803` excluded), prints `ROCm ${ROCM_VERSION}` + `HIP+Vulkan gfx1150`,
    and pushes `ansible/files/configure-ai-engine-inside-lxc.sh` via `pct push` (`env ROCM_VERSION=...` forwarded).
 2. **Configuration**: `ansible/playbooks/hlh-ai-engine.yml` runs `ansible/files/configure-ai-engine-inside-lxc.sh` inside the container
    (installs `ROCM_VERSION` `amdrocm${MM}-gfx1150` + `Vulkan` deps, builds `llama.cpp` dual `GGML_HIP=ON + GGML_VULKAN=ON`).
@@ -117,7 +117,7 @@ hlh-ai-engine/
 
 **Dual HIP+Vulkan — single chip `gfx1150` (890M Strix Halo), no perf hit.** HIP *is* ROCm (`GGML_HIP` = ROCm path); Vulkan is Mesa RADV. Earlier single-ROCm builds disabled Vulkan for missing `SPIRV-Headers` — now resolved (`libvulkan-dev`, `glslang-tools` `glslc`, `spirv-tools`).
 
-- ROCm `10.0.0` default (unpinned, latest 2026-08-26; never pinned). `7.14.x` + `10.0.x` both support `gfx1150` natively via `rocBLAS`; deploy always prints version. Package names track `major.minor`: `amdrocm10.0-gfx1150` for `10.0.0`, `amdrocm7.14-gfx1150` for `7.14.1` (`ROCM_MM=$(cut -d. -f1,2)` in bootstrap).
+- ROCm `10.0.0` default (unpinned, latest 2026-08-26; never pinned). `7.14.x` + `10.0.x` both support `gfx1150` natively via `rocBLAS`; deploy always prints version. Package names track `major.minor`: `amdrocm10.0-gfx1150` for `10.0.0`, `amdrocm7.14-gfx1150` for `7.14.1` (`ROCM_MM=$(cut -d. -f1,2)` in bootstrap). GPU PCI IDs: `card0` (was `card1`), `renderD128` (was `renderD129`), kfd `511:0` (ROCm 7) + `234:0` (ROCm 10).
 - `HSA_OVERRIDE_GFX_VERSION=11.5.0` set in `ai-engine.service` `ansible/files/configure-ai-engine-inside-lxc.sh:62` — rocBLAS native `gfx1150`.
 - `AMDGPU_TARGETS=gfx1150` at build time (chip-locked repo; not multi-target).
 - `GGML_HIP=ON + GGML_VULKAN=ON` — same binaries, runtime pick `-dev ROCm0|Vulkan0`. Pure HIP vs dual has **no inference perf delta** (HIP uses `rocBLAS`, Vulkan uses `RADV ACO`; disjoint codegen, idle backend not dispatched). Binary `+~12-18M`, build `+4-6m` only.

@@ -14,16 +14,16 @@ This is what is already implemented and verified in this repository.
 
 ## GPU Passthrough
 
-- AMD iGPU `/dev/dri` bind-mount for ROCm **and Vulkan** device access (`/dev/dri/card1` `226:1`, `renderD129` `226:129` — 890M `gfx1150` only)
-- AMD iGPU `/dev/kfd` bind-mount for HIP/ROCm compute (`511:0` shared)
-- cgroup2 device allow rules: `c 226:1 rwm`, `c 226:129 rwm`, `c 511:0 rwm` (RX480 `gfx803` intentionally excluded)
+- AMD iGPU `/dev/dri` bind-mount for ROCm **and Vulkan** device access (`/dev/dri/card0` `226:1`, `renderD128` `226:128` — 890M `gfx1150` only; corrected from `card1`/`renderD129` in `1010f5e`)
+- AMD iGPU `/dev/kfd` bind-mount for HIP/ROCm compute (`511:0` ROCm 7, `234:0` ROCm 10 — `2713d18`, both allowed for forward compat)
+- cgroup2 device allow rules: `c 226:1 rwm`, `c 226:128 rwm`, `c 511:0 rwm`, `c 234:0 rwm` (RX480 `gfx803` intentionally excluded; corrected from `renderD129`/`226:129` in `1010f5e`, added `234:0` for ROCm 10 in `2713d18`)
 - GPU detected as gfx1150 (Radeon 890M, RDNA 3.5 Strix Halo, `gfx1150`)
 - `HSA_OVERRIDE_GFX_VERSION=11.5.0` set in systemd unit
 - Single-chip repo: `AMDGPU_TARGETS=gfx1150` only
 
 ## ROCm / Runtime
 
-- ROCm **unpinned, never pinned**: `ROCM_VERSION` env default `10.0.0` (2026-08-26 latest), `7.14.1` still supported via `ROCM_VERSION=7.14.1 ./deploy-hlh-ai-engine.sh` — deploy always prints version, forwarded into LXC
+- ROCm **unpinned, never pinned**: `ROCM_VERSION` env default `10.0.0` (2026-08-26 latest), `7.14.1` still supported via `ROCM_VERSION=7.14.1 ./deploy-hlh-ai-engine.sh` — deploy always prints version, forwarded into LXC. GPU PCI: `card0` (was `card1`), `renderD128` (was `renderD129`), `kfd` `511:0` (ROCm 7) + `234:0` (ROCm 10, `2713d18`)
 - ROCm package names track `major.minor`: `amdrocm${ROCM_MM}-gfx1150` + `amdrocm-core-dev${ROCM_MM}-gfx1150` (`ROCM_MM=$(cut -d. -f1,2)`)
 - ROCm repo keyrings and APT pinning configured (`repo.radeon.com` Pin-Priority `1001`, `rocminfo` removed)
 - Vulkan deps restored: `libvulkan-dev`, `glslang-tools` (`glslc`), `spirv-tools`, `vulkan-tools` (for `GGML_VULKAN=ON`, RADV `GFX1150`)
